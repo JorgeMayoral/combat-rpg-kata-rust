@@ -7,32 +7,41 @@ pub struct Character {
 }
 
 impl Character {
-    pub fn attack(&self, target: &mut Character, damage: u32) {
-        if target.health <= damage {
-            target.health = 0;
-            target.alive = false;
-        } else {
-            target.health -= damage;
+    pub fn new(health: u32, level: u32) -> Self {
+        let alive = health > 0;
+        Self {
+            health,
+            level,
+            alive,
         }
     }
 
-    pub fn heal(&self, target: &mut Character, health: u32) {
-        if target.alive {
-            match target.health + health > MAX_HEALTH {
-                true => target.health = MAX_HEALTH,
-                false => target.health += health,
+    pub fn attack(&self, target: Self, damage: u32) -> Self {
+        let level_diff = self.level as i32 - target.level as i32;
+        let new_damage = match level_diff {
+            5.. => damage + (damage / 2),
+            ..=-5 => damage - (damage / 2),
+            _ => damage,
+        };
+        let new_health = target.health - new_damage;
+        Self::new(new_health, target.level)
+    }
+
+    pub fn heal(&self, health: u32) -> Self {
+        if self.alive {
+            match self.health + health > MAX_HEALTH {
+                true => Self::new(health, self.level),
+                false => Self::new(self.health + health, self.level),
             }
+        } else {
+            Self::new(0, self.level)
         }
     }
 }
 
 impl Default for Character {
     fn default() -> Self {
-        Self {
-            health: MAX_HEALTH,
-            level: 1,
-            alive: true,
-        }
+        Self::new(MAX_HEALTH, 1)
     }
 }
 
@@ -51,24 +60,33 @@ mod tests {
     #[test]
     fn test_character_attack() {
         let attacker = Character::default();
-        let mut defender = Character::default();
-        attacker.attack(&mut defender, 1000);
+        let defender = Character::default();
+        let defender = attacker.attack(defender, 1000);
         assert_eq!(defender.health, 0);
         assert!(!defender.alive);
+
+        let attacker = Character::new(1000, 10);
+        let stronger_defender = Character::new(1000, 20);
+        let stronger_defender = attacker.attack(stronger_defender, 200);
+        assert_eq!(stronger_defender.health, 900);
+
+        let weaker_defender = Character::new(1000, 1);
+        let weaker_defender = attacker.attack(weaker_defender, 200);
+        assert_eq!(weaker_defender.health, 700);
     }
 
     #[test]
     fn test_character_heal() {
-        let healer = Character::default();
-        let mut target = Character::default();
-        healer.attack(&mut target, 200);
-        healer.heal(&mut target, 100);
-        assert_eq!(target.health, 900);
-        healer.heal(&mut target, 200);
-        assert_eq!(target.health, 1000);
-        healer.attack(&mut target, 1200);
-        healer.heal(&mut target, 100);
-        assert_eq!(target.health, 0);
-        assert!(!target.alive);
+        let healer = Character::new(100, 1);
+        let healer = healer.heal(100);
+        assert_eq!(healer.health, 200);
+
+        let healer = healer.heal(1000);
+        assert_eq!(healer.health, 1000);
+
+        let healer = Character::new(0, 1);
+        let healer = healer.heal(100);
+        assert_eq!(healer.health, 0);
+        assert!(!healer.alive);
     }
 }
