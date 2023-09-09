@@ -12,6 +12,7 @@ pub struct Character {
     pub alive: bool,
     pub class: CharacterClass,
     pub attack_range: u32,
+    pub factions: Option<Vec<&'static str>>,
 }
 
 impl Character {
@@ -27,10 +28,14 @@ impl Character {
             alive,
             class,
             attack_range,
+            factions: None,
         }
     }
 
     pub fn attack(&self, target: Self, damage: u32, range: u32) -> Self {
+        if self.is_allied_with(&target) {
+            return target;
+        }
         if range > self.attack_range {
             return target;
         }
@@ -44,14 +49,64 @@ impl Character {
         Self::new(new_health, target.level, target.class)
     }
 
-    pub fn heal(&self, health: u32) -> Self {
-        if self.alive {
-            match self.health + health > MAX_HEALTH {
-                true => Self::new(health, self.level, self.class),
-                false => Self::new(self.health + health, self.level, self.class),
+    fn heal(&self, target: &Self, health: u32) -> Self {
+        if target.alive {
+            match target.health + health > MAX_HEALTH {
+                true => Self::new(health, target.level, target.class),
+                false => Self::new(target.health + health, target.level, target.class),
             }
         } else {
-            Self::new(0, self.level, self.class)
+            Self::new(0, target.level, target.class)
+        }
+    }
+
+    pub fn heal_self(&self, health: u32) -> Self {
+        self.heal(self, health)
+    }
+
+    pub fn heal_others(&self, target: Self, health: u32) -> Self {
+        if self.is_allied_with(&target) {
+            return self.heal(&target, health);
+        };
+        target
+    }
+
+    pub fn join_faction(&self, faction: &'static str) -> Self {
+        let mut factions = match self.factions.clone() {
+            Some(factions) => factions,
+            None => vec![],
+        };
+        factions.push(faction);
+        Self {
+            factions: Some(factions),
+            ..*self
+        }
+    }
+
+    pub fn leave_faction(&self, faction: &'static str) -> Self {
+        let factions = match self.factions.clone() {
+            Some(factions) => {
+                let mut factions = factions;
+                factions.retain(|f| f != &faction);
+                if factions.is_empty() {
+                    None
+                } else {
+                    Some(factions)
+                }
+            }
+            None => None,
+        };
+        Self { factions, ..*self }
+    }
+
+    pub fn is_allied_with(&self, other_character: &Character) -> bool {
+        let other_char_factions = match other_character.factions.clone() {
+            Some(factions) => factions,
+            None => return false,
+        };
+        match self.factions.clone() {
+            Some(factions) => factions.iter().any(|f| other_char_factions.contains(f)),
+            None => false,
         }
     }
 }
@@ -72,6 +127,7 @@ mod tests {
         assert_eq!(character.health, 1000);
         assert_eq!(character.level, 1);
         assert!(character.alive);
+        assert_eq!(character.factions, None);
     }
 
     #[test]
@@ -95,14 +151,14 @@ mod tests {
     #[test]
     fn test_character_heal() {
         let healer = Character::new(100, 1, CharacterClass::Melee);
-        let healer = healer.heal(100);
+        let healer = healer.heal_self(100);
         assert_eq!(healer.health, 200);
 
-        let healer = healer.heal(1000);
+        let healer = healer.heal_self(1000);
         assert_eq!(healer.health, 1000);
 
         let healer = Character::new(0, 1, CharacterClass::Melee);
-        let healer = healer.heal(100);
+        let healer = healer.heal_self(100);
         assert_eq!(healer.health, 0);
         assert!(!healer.alive);
     }
@@ -124,5 +180,57 @@ mod tests {
         let in_range_target = ranged_fighter.attack(in_range_target, 1000, 20);
         assert_eq!(out_of_range_target.health, 1000);
         assert_eq!(in_range_target.health, 0);
+    }
+
+    #[test]
+    fn test_join_and_leave_one_or_more_factions() {
+        let factions = vec!["Faction-A"];
+        let character = Character::default().join_faction("Faction-A");
+        assert_eq!(character.factions, Some(factions));
+
+        let factions = vec!["Faction-A", "Faction-B"];
+        let character = character.join_faction("Faction-B");
+        assert_eq!(character.factions, Some(factions));
+
+        let factions = vec!["Faction-A"];
+        let character = character.leave_faction("Faction-B");
+        assert_eq!(character.factions, Some(factions));
+
+        let character = character.leave_faction("Faction-A");
+        assert_eq!(character.factions, None);
+    }
+
+    #[test]
+    fn test_same_faction_allies() {
+        let faction_name = "Faction-A";
+        let char_a = Character::default().join_faction(faction_name);
+        let char_b = Character::default().join_faction(faction_name);
+        let char_c = Character::default();
+        assert!(char_a.is_allied_with(&char_b));
+        assert!(!char_a.is_allied_with(&char_c));
+    }
+
+    #[test]
+    fn test_can_not_damage_allies() {
+        let faction_name = "Faction-A";
+        let char_a = Character::default().join_faction(faction_name);
+        let char_b = Character::default().join_faction(faction_name);
+        let char_c = Character::default();
+        let char_b = char_a.attack(char_b, 1000, 1);
+        let char_c = char_a.attack(char_c, 1000, 1);
+        assert_eq!(char_b.health, 1000);
+        assert_eq!(char_c.health, 0);
+    }
+
+    #[test]
+    fn test_can_heal_allies() {
+        let faction_name = "Faction-A";
+        let char_a = Character::default().join_faction(faction_name);
+        let char_b = Character::new(500, 1, CharacterClass::Melee).join_faction(faction_name);
+        let char_c = Character::new(500, 1, CharacterClass::Melee);
+        let char_b = char_a.heal_others(char_b, 200);
+        let char_c = char_a.heal_others(char_c, 200);
+        assert_eq!(char_b.health, 700);
+        assert_eq!(char_c.health, 500);
     }
 }
