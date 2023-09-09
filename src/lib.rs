@@ -1,5 +1,59 @@
 const MAX_HEALTH: u32 = 1000;
 
+pub enum AttackTargetType {
+    Character(Character),
+    Prop(Prop),
+}
+
+impl AttackTargetType {
+    pub fn health(&self) -> u32 {
+        match self {
+            AttackTargetType::Character(character) => character.health,
+            AttackTargetType::Prop(prop) => prop.health,
+        }
+    }
+
+    pub fn alive(&self) -> bool {
+        match self {
+            AttackTargetType::Character(character) => character.alive,
+            AttackTargetType::Prop(prop) => !prop.destroyed,
+        }
+    }
+
+    pub fn destroyed(&self) -> bool {
+        match self {
+            AttackTargetType::Character(character) => !character.alive,
+            AttackTargetType::Prop(prop) => prop.destroyed,
+        }
+    }
+}
+
+impl From<Character> for AttackTargetType {
+    fn from(character: Character) -> Self {
+        Self::Character(character)
+    }
+}
+
+impl From<Prop> for AttackTargetType {
+    fn from(prop: Prop) -> Self {
+        Self::Prop(prop)
+    }
+}
+
+pub struct Prop {
+    pub health: u32,
+    pub destroyed: bool,
+}
+
+impl Prop {
+    pub fn new(health: u32) -> Self {
+        Self {
+            health,
+            destroyed: health == 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum CharacterClass {
     Melee,
@@ -32,11 +86,13 @@ impl Character {
         }
     }
 
-    pub fn attack(&self, target: Self, damage: u32, range: u32) -> Self {
+    fn attack_prop(&self, target: Prop, damage: u32) -> Prop {
+        let new_health = target.health - damage;
+        Prop::new(new_health)
+    }
+
+    fn attack_character(&self, target: Self, damage: u32) -> Self {
         if self.is_allied_with(&target) {
-            return target;
-        }
-        if range > self.attack_range {
             return target;
         }
         let level_diff = self.level as i32 - target.level as i32;
@@ -47,6 +103,20 @@ impl Character {
         };
         let new_health = target.health - new_damage;
         Self::new(new_health, target.level, target.class)
+    }
+
+    pub fn attack(&self, target: AttackTargetType, damage: u32, range: u32) -> AttackTargetType {
+        if range > self.attack_range {
+            return target;
+        }
+        match target {
+            AttackTargetType::Character(target) => {
+                AttackTargetType::Character(self.attack_character(target, damage))
+            }
+            AttackTargetType::Prop(target) => {
+                AttackTargetType::Prop(self.attack_prop(target, damage))
+            }
+        }
     }
 
     fn heal(&self, target: &Self, health: u32) -> Self {
@@ -134,18 +204,18 @@ mod tests {
     fn test_character_attack() {
         let attacker = Character::default();
         let defender = Character::default();
-        let defender = attacker.attack(defender, 1000, 1);
-        assert_eq!(defender.health, 0);
-        assert!(!defender.alive);
+        let defender = attacker.attack(defender.into(), 1000, 1);
+        assert_eq!(defender.health(), 0);
+        assert!(!defender.alive());
 
         let attacker = Character::new(1000, 10, CharacterClass::Melee);
         let stronger_defender = Character::new(1000, 20, CharacterClass::Melee);
-        let stronger_defender = attacker.attack(stronger_defender, 200, 1);
-        assert_eq!(stronger_defender.health, 900);
+        let stronger_defender = attacker.attack(stronger_defender.into(), 200, 1);
+        assert_eq!(stronger_defender.health(), 900);
 
         let weaker_defender = Character::new(1000, 1, CharacterClass::Melee);
-        let weaker_defender = attacker.attack(weaker_defender, 200, 1);
-        assert_eq!(weaker_defender.health, 700);
+        let weaker_defender = attacker.attack(weaker_defender.into(), 200, 1);
+        assert_eq!(weaker_defender.health(), 700);
     }
 
     #[test]
@@ -168,18 +238,18 @@ mod tests {
         let melee_fighter = Character::new(1000, 1, CharacterClass::Melee);
         let out_of_range_target = Character::default();
         let in_range_target = Character::default();
-        let out_of_range_target = melee_fighter.attack(out_of_range_target, 1000, 5);
-        let in_range_target = melee_fighter.attack(in_range_target, 1000, 1);
-        assert_eq!(out_of_range_target.health, 1000);
-        assert_eq!(in_range_target.health, 0);
+        let out_of_range_target = melee_fighter.attack(out_of_range_target.into(), 1000, 5);
+        let in_range_target = melee_fighter.attack(in_range_target.into(), 1000, 1);
+        assert_eq!(out_of_range_target.health(), 1000);
+        assert_eq!(in_range_target.health(), 0);
 
         let ranged_fighter = Character::new(1000, 1, CharacterClass::Ranged);
         let out_of_range_target = Character::default();
         let in_range_target = Character::default();
-        let out_of_range_target = ranged_fighter.attack(out_of_range_target, 1000, 25);
-        let in_range_target = ranged_fighter.attack(in_range_target, 1000, 20);
-        assert_eq!(out_of_range_target.health, 1000);
-        assert_eq!(in_range_target.health, 0);
+        let out_of_range_target = ranged_fighter.attack(out_of_range_target.into(), 1000, 25);
+        let in_range_target = ranged_fighter.attack(in_range_target.into(), 1000, 20);
+        assert_eq!(out_of_range_target.health(), 1000);
+        assert_eq!(in_range_target.health(), 0);
     }
 
     #[test]
@@ -216,10 +286,10 @@ mod tests {
         let char_a = Character::default().join_faction(faction_name);
         let char_b = Character::default().join_faction(faction_name);
         let char_c = Character::default();
-        let char_b = char_a.attack(char_b, 1000, 1);
-        let char_c = char_a.attack(char_c, 1000, 1);
-        assert_eq!(char_b.health, 1000);
-        assert_eq!(char_c.health, 0);
+        let char_b = char_a.attack(char_b.into(), 1000, 1);
+        let char_c = char_a.attack(char_c.into(), 1000, 1);
+        assert_eq!(char_b.health(), 1000);
+        assert_eq!(char_c.health(), 0);
     }
 
     #[test]
@@ -232,5 +302,25 @@ mod tests {
         let char_c = char_a.heal_others(char_c, 200);
         assert_eq!(char_b.health, 700);
         assert_eq!(char_c.health, 500);
+    }
+
+    #[test]
+    fn test_create_prop() {
+        let prop = Prop::new(1000);
+        assert_eq!(prop.health, 1000);
+        assert!(!prop.destroyed);
+
+        let prop = Prop::new(0);
+        assert_eq!(prop.health, 0);
+        assert!(prop.destroyed);
+    }
+
+    #[test]
+    fn test_can_attack_prop() {
+        let attacker = Character::default();
+        let prop = Prop::new(1000);
+        let prop = attacker.attack(prop.into(), 1000, 1);
+        assert_eq!(prop.health(), 0);
+        assert!(prop.destroyed());
     }
 }
